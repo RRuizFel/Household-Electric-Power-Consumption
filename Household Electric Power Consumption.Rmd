@@ -1,0 +1,461 @@
+---
+title: "Household Electric Power Consumption"
+author: "Roberto Ruiz Felix"
+date: "2024-10-06"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+# Background
+
+## Data
+
+This dataset contains measurements of electricity consumption from a single household, taken at one-minute intervals over nearly four years. It includes various electrical quantities and some sub-metering data.
+
+This archive includes 2,075,259 measurements collected from a house in Sceaux, located 7 km from Paris, France, between December 2006 and November 2010 (covering 47 months).
+
+This data set has been sourced from the University of California, Irvine Machine Learning Repository. For more information, please visit the [Individual household electric poower consumption Data Set (UC Irvine)](https://archive.ics.uci.edu/dataset/235/individual+household+electric+power+consumption).
+
+------------------------------------------------------------------------
+
+# At what times of day and during which weeks or months is power consumption at its highest?
+
+------------------------------------------------------------------------
+
+# Load Data
+
+## Load Packages
+
+```{r warning=FALSE, message=FALSE}
+library('dplyr')
+library('lubridate')
+library('ggplot2')
+library('tidyr')
+library('plotly')
+library('psych')
+library('corrplot')
+```
+
+## Set Directory & Read File
+
+```{r warning=FALSE}
+setwd("/Users/robertoruizfelix/Downloads/")
+raw_data = readLines("household_power_consumption.txt")
+str(raw_data)
+head(raw_data)
+```
+
+## Convert Raw Data to a Data Frame
+
+```{r echo=FALSE, warning=FALSE}
+# Remove empty lines 
+raw_data = raw_data[raw_data != ""]
+split_data = strsplit(raw_data, ";")
+
+data = as.data.frame(do.call(rbind, split_data), stringsAsFactors = FALSE)
+colnames(data) = data[1, ]  # Use the first row as column names
+data = data[-1, ]           # Remove the first row from data
+
+# Convert columns from character to numeric
+numeric_cols = c("Global_active_power", "Global_reactive_power", "Voltage",
+                 "Global_intensity", "Sub_metering_1", "Sub_metering_2",
+                 "Sub_metering_3")
+data[numeric_cols] = lapply(data[numeric_cols], as.numeric)
+
+str(data)
+head(data)
+```
+
+## Data Card
+
+| Column Position | Attribute             | Definition                                                                                      | Example    |
+|---------|------------------|-----------------------------------|------------|
+| 1               | Date                  | Date in dd/mm/yyyy                                                                              | 11/14/2020 |
+| 2               | Time                  | Time in hh:mm:ss                                                                                | 20:12:59   |
+| 3               | Global_Active_Power   | Household global minute-averaged active power (kW)                                              | 3.14       |
+| 4               | Global_Reactive_Power | Household global minute-averaged reactive power (kW)                                            | 0.420      |
+| 5               | Voltage               | Minute-averaged voltage (V)                                                                     | 234.01     |
+| 6               | Global_intensity      | Household global minute-averaged current intensity (A)                                          | 15.15      |
+| 7               | Sub_metering_1        | Energy sub-metering (watt-hour of active energy); corresponds to the kitchen.                   | 16         |
+| 8               | Sub_metering_2        | Energy sub-metering (watt-hour of active energy); laundry room.                                 | 1          |
+| 9               | Sub_metering_3        | Energy sub-metering (watt-hour of active energy); electric water-heater and an air-conditioner. | 10         |
+
+------------------------------------------------------------------------
+
+# Data Cleaning
+
+```{r echo=FALSE, warning=FALSE}
+missing_vals = sapply(data, function(x) sum(is.na(x)))
+missing_vals = data.frame(Column = names(missing_vals), Missing_Count = missing_vals)
+missing_vals$Total = nrow(data)
+msng_tmp = ggplot(missing_vals, aes(x = Column)) + 
+  geom_bar(aes(y = Total), stat = "identity", fill = "lightblue") +
+  geom_bar(aes(y = Missing_Count), stat = "identity", fill = "red") + 
+  labs(title = "Total Data vs Missing Values by Column", 
+       x = "Columns", 
+       y = "Count") +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+msng = ggplotly(msng_tmp)
+msng
+```
+
+```{r, warning=FALSE}
+# Omit missing values
+data = na.omit(data)
+```
+
+```{r echo=FALSE}
+missing_vals = sapply(data, function(x) sum(is.na(x)))
+missing_vals = data.frame(Column = names(missing_vals), Missing_Count = missing_vals)
+missing_vals$Total = nrow(data)
+msng_clean_tmp = ggplot(missing_vals, aes(x = Column)) + 
+  geom_bar(aes(y = Total), stat = "identity", fill = "lightblue") +
+  geom_bar(aes(y = Missing_Count), stat = "identity", fill = "red") + 
+  labs(title = "Missing Values Cleaned", 
+       x = "Columns", 
+       y = "Count") +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+msng_clean = ggplotly(msng_clean_tmp)
+msng_clean
+```
+
+------------------------------------------------------------------------
+
+# Features & Feature Engineering
+
+```{r warning=FALSE}
+colnames(data)[7:9] = c("Kitchen(W/hr)", "Laundry_Room(W/hr)", "Electric_WaterHeater/AC(W/hr)")
+data = data %>%
+  mutate(
+    `Total_metering(W/hr)` = `Kitchen(W/hr)` + `Laundry_Room(W/hr)` + `Electric_WaterHeater/AC(W/hr)`,
+    Apparent_Power = sqrt(Global_active_power^2 + Global_reactive_power^2),
+    Power_Factor = Global_active_power / Apparent_Power,
+    Date = dmy(Date),
+    DateTime = as.POSIXct(paste(Date, Time)),
+    Time = hms(Time),
+    Year = year(DateTime),
+    Month = month(DateTime),
+    Week = week(DateTime),
+    Day = yday(DateTime)
+    ) %>%
+  select(-Date, -Time)
+head(data)
+```
+
+### New Columns
+
+-   **Total_metering(W/hr):** Total metering-Watts per hour- of all utilities being metered
+
+-   **Apparent Power**:
+
+    $$ \text{Apparent Power} = \sqrt{\text{Global Active Power}^2 + \text{Global Reactive Power}^2} $$
+
+-   **Power Factor**:
+
+    $$ \text{Power Factor} = \frac{\text{Global Active Power}}{\text{Apparent Power}} $$
+
+-   **DateTime:** Combined Date and Time
+
+-   **Time:** As a time class
+
+-   **Year:** Year of observation
+
+-   **Month:** Month of observation in numerical form
+
+-   **Week:** Week of observation in numerical form
+
+-   **Day:** Day of observation in numerical form
+
+## Descriptive Statistics
+
+```{r echo=FALSE, warning=FALSE}
+describe(data)
+```
+
+### Power Factor (PF)
+
+Measure of how effectively electrical power if being converted into useful work output.
+
+-   **A PF of 1** indicates that all the power is being used effectively for work, meaning there is no reactive power.
+
+-   **A PF smaller than 1** indicates that not all the power is being used effectively.
+
+```{r echo=FALSE}
+pf_tmp = ggplot(data, aes("", Power_Factor)) +
+  geom_violin(fill = "lightgreen") + 
+  labs(title = "Power Factor Violin Plot", 
+       y = "Power Factor")
+pf_violin = ggplotly(pf_tmp, tooltip = "text")
+pf_violin
+```
+
+```{r echo=FALSE}
+pf_hist_tmp = ggplot(data, aes(Power_Factor)) +
+  geom_histogram(bins = 30, fill = "lightgreen", color = "black") +
+  labs(title = "Distribution of Power Factor", 
+       x = "Power Factor", 
+       y = "Frequency") +
+  theme_minimal()
+pf_hist = ggplotly(pf_hist_tmp, tooltip = "text")
+pf_hist
+```
+
+Since all Power Factors are above 55%, this indicates the efficient use of electrical power. Furthermore, it becomes evident that majority of the PF's are above 90% indicating that there is minimal loss in electrical distribution systems. Thus, this household is not prone for a higher energy costs because **utilities do not need to charge for the additional apparent power.**
+
+### Visualizations (top-down)
+
+
+## Total Metering by Year
+
+Group data by year
+
+```{r}
+yearly_data = data %>%
+  group_by(Year)
+```
+
+```{r echo=FALSE}
+yearly_data = data %>%
+  group_by(Year)
+yearly_data_bar = yearly_data %>%
+  summarise(Total_Metering = sum(`Total_metering(W/hr)`))
+tmp_year_total_metering = ggplot(yearly_data_bar, aes(Year, Total_Metering)) + 
+  geom_bar(stat = "identity", fill = "lightgreen") + 
+  labs(title = "Total Energy Sub-Metering per Year",
+       x = "Year", 
+       y = "Watts per Hour")
+yearly_metering = ggplotly(tmp_year_total_metering, tooltip = "text")
+yearly_metering
+```
+
+From the Bar plot above, it becomes evident that there was much less appliance use in 2006, lets investigate why?
+
+```{r}
+months_by_year <- data %>%
+  mutate(Month = format(DateTime, "%B")) %>%  # Extract the month name
+  group_by(Year) %>%
+  summarise(Months = list(unique(Month)))
+months_by_year
+```
+
+From our tibble, we see that **2006 only has one month** of data. Furthermore, 2010 has 11 months of data, but this is sufficient for our case as we will be conducting a time-series analysis. Thus, we must drop the year 2006 since there is insufficient data for our use.
+
+```{r}
+# Remove 2006 data
+data = data[data$Year != 2006, ] 
+```
+
+## Metering by Month: Total vs. Average Line Graph
+
+```{r, warning=FALSE}
+# Sum of Monthly data
+monthly_data_total = data %>%
+  group_by(Year, Month) %>%
+  summarise(Total_Metering = sum(`Total_metering(W/hr)`), .groups = "drop")
+
+#Average of Monthly data
+monthly_data_avg = data %>%
+  group_by(Year, Month) %>%
+  summarise(Mean_Metering = mean(`Total_metering(W/hr)`), .groups = "drop")
+```
+
+```{r echo=FALSE, warning=FALSE}
+tmp_month_ttl = ggplot(monthly_data_total, aes(Month, Total_Metering, color = as.factor(Year))) +
+  geom_line() +
+  scale_x_continuous(limits = c(1,12), breaks = 1:12) +
+  labs(title = "Total Energy Sub-metering per Month",
+       x = "Month",
+       y = "Watts per Hour",
+       color = "Year") 
+month_total_metering = ggplotly(tmp_month_ttl, tooltip = "text")
+month_total_metering
+```
+
+```{r echo=FALSE, warning=FALSE}
+tmp_month_avg = ggplot(monthly_data_avg, aes(Month, Mean_Metering, color = as.factor(Year))) +
+  geom_line() +
+  scale_x_continuous(limits = c(1,12), breaks = 1:12) +
+  labs(title = "Mean Energy Sub-metering per Month",
+       x = "Month",
+       y = "Watts per Hour",
+       color = "Year") 
+month_avg_metering = ggplotly(tmp_month_avg, tooltip = "text")
+month_avg_metering
+```
+
+Through both graphs that compare the average vs total metering for all years, it becomes evident that they are very similar and do not deviate from each other much. Examining the graph, it becomes evident that the **first, second, and twelfth month of the year have the highest energy sub-metering**. However, there is the exception of 2010 as there is no data for the twelfth month.
+
+## Metering by combined Months: Total vs. Average Box Plot
+
+```{r echo=FALSE}
+tmp_boxmonth = ggplot(monthly_data_total, aes(as.factor(Month), Total_Metering, fill = as.factor(Month))) +
+  geom_boxplot() +
+  labs(title = "Monthly Total Energy Metering",
+       x = "Month",
+       y = "Watts per Hour") +
+  theme(legend.position = "none") 
+monthly_box = ggplotly(tmp_boxmonth, tooltip = "text")
+monthly_box
+```
+
+```{r echo=FALSE}
+tmp_boxmonth_avg = ggplot(monthly_data_avg, aes(as.factor(Month), Mean_Metering, fill = as.factor(Month))) +
+  geom_boxplot() +
+  labs(title = "Monthly Mean Energy Metering",
+       x = "Month",
+       y = "Watts per Hour") +
+  theme(legend.position = "none") 
+monthly_box_avg = ggplotly(tmp_boxmonth_avg, tooltip = "text")
+monthly_box_avg
+```
+
+Similar to above, both graphs are very similar to each other, even after combining the yearly data, excluding the 12th month of 2010. Examining the boxes, it becomes very clear that the **first, second, and twelfth month have the highest median as well as maximum**. \## Metering by Weeks: Total vs. Average Line Graph
+
+```{r warning=FALSE}
+# Sum of Weekly data
+weekly_data_ttl = data %>%
+  group_by(Year, Week) %>%
+  summarise(Total_Metering = sum(`Total_metering(W/hr)`), .groups = "drop")
+
+# Average Weekly data
+weekly_data_avg = data %>%
+  group_by(Year, Week) %>%
+  summarise(Mean_Metering = mean(`Total_metering(W/hr)`), .groups = "drop")
+```
+
+```{r echo=FALSE, warning=FALSE}
+tmp_weekly_ttl <- ggplot(weekly_data_ttl, aes(x = Week, y = Total_Metering, color = as.factor(Year))) +
+  geom_line() +
+  scale_x_continuous(breaks = seq(0, 53, by = 10)) + 
+  labs(title = "Total Energy Sub-metering per Week",
+       x = "Week",
+       y = "Watts per Hour",
+       color = "Year") 
+weekly_total_metering = ggplotly(tmp_weekly_ttl, tooltip = "text")
+weekly_total_metering
+```
+
+```{r echo=FALSE, warning=FALSE}
+tmp_weekly_avg <- ggplot(weekly_data_avg, aes(x = Week, y = Mean_Metering, color = as.factor(Year))) +
+  geom_line() +
+  scale_x_continuous(breaks = seq(0, 53, by = 10)) + 
+  labs(title = "Mean Energy Sub-metering per Week",
+       x = "Week",
+       y = "Watts per Hour",
+       color = "Year") 
+weekly_avg_metering = ggplotly(tmp_weekly_avg, tooltip = "text")
+weekly_avg_metering
+```
+
+Looking at the average and total graphs, there are common peaks in similar times. Analyzing the graphs, **the three highest energy sub-metering readings are at week 5, 48, and 52**. Although the average graph peaks at week 53 instead of 52, it is important to note that there is no data for 2010 from week 48 onward. However, these numbers are one week apart and fall within the same month, approaching form a macro level. \## Metering by combined Weeks: Total vs. Average Box Plot
+
+```{r echo=FALSE, warning=FALSE}
+tmp_boxweek = ggplot(weekly_data_ttl, aes(as.factor(Week), Total_Metering, fill = as.factor(Week))) +
+  geom_boxplot() +
+  scale_x_discrete(breaks = seq(0, 53, by = 5)) +
+  labs(title = "Box Plot of Weekly Total Energy Sub-metering",
+       x = "Week",
+       y = "Watts per Hour") +
+  theme(legend.position = "none") 
+weekly_box = ggplotly(tmp_boxweek, tooltip = "text")
+weekly_box
+```
+
+```{r echo=FALSE, warning=FALSE}
+tmp_boxweek_avg = ggplot(weekly_data_avg, aes(as.factor(Week), Mean_Metering, fill = as.factor(Week))) +
+  geom_boxplot() +
+  scale_x_discrete(breaks = seq(0, 53, by = 5)) +
+  labs(title = "Box Plot of Weekly Mean Energy Sub-metering",
+       x = "Week",
+       y = "Watts per Hour") +
+  theme(legend.position = "none") 
+weekly_box_avg = ggplotly(tmp_boxweek_avg, tooltip = "text")
+weekly_box_avg
+```
+
+Looking at the box plots, which groups the data by years as opposed to keeping them distinct, the pattern is very similar to that of the line graphs above. Analyzing both graphs, the same peaks occur at weeks 8 and 48. However, now that the data is combined, it becomes evident by looking at the the second box plot that Week 52 has a higher energy sub-metering due to its max and median. Thus, **week 8, 48, and 52 have the highest energy sub-metering values**.
+
+## Sub-metering Category Visualizations
+
+## What sub-metering category uses the most energy?
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+sub_metering_data = data %>% 
+  group_by(Year, Week) %>%
+  summarise(Laundry_Room_avg = mean(`Laundry_Room(W/hr)`),
+            Kitchen_avg = mean(`Kitchen(W/hr)`),
+            `Electric_WaterHeater/Ac` = mean(`Electric_WaterHeater/AC(W/hr)`)
+            ) %>%
+  ungroup()
+long_sub_metering = sub_metering_data %>%
+  pivot_longer(cols = c(Laundry_Room_avg, Kitchen_avg, `Electric_WaterHeater/Ac`),
+               names_to = "Category", 
+               values_to = "Average_Watts")
+```
+
+```{r echo=FALSE}
+facet_weekly_avg_energy_tmp = ggplot(long_sub_metering, aes(Week, Average_Watts, color = Category)) +
+  geom_line() +
+  facet_wrap(~ Year, scales = "fixed") +
+  labs(title = "Average Energy Consumption by Category",
+       x = "Week",
+       y = "Average Watts per Hour",
+       color = "Category")
+facet_weekly_avg_engy = ggplotly(facet_weekly_avg_energy_tmp, tooltip = "text")
+facet_weekly_avg_engy
+```
+
+```{r echo=FALSE}
+avg_energy_weekly_tmp = ggplot(long_sub_metering, aes(Week, Average_Watts, color = Category))+
+  geom_line() + 
+  scale_x_continuous(breaks = seq(0, 53, by = 10)) + 
+  labs(title = "Weekly Average Category Energy Consumption", 
+       x = "Week", 
+       y = "Watts per Hour")
+avg_energy_year_round = ggplotly(avg_energy_weekly_tmp, tooltip = "text")
+avg_energy_year_round
+```
+
+Looking at both graphs, it becomes clear that **the Electric Water Heater and Air Conditioning Systems use the most energy** across all weeks.
+
+## Hourly Analysis
+
+## During what time of day is energy used the most?
+
+```{r echo=FALSE, message=FALSE}
+tmp_data <- data %>%
+  mutate(Hour = hour(DateTime)) %>%
+  group_by(Year, Hour) %>%
+  summarise(Mean_Metering = mean(`Total_metering(W/hr)`))
+hourly_use_tmp = ggplot(tmp_data, aes(x = Hour, y = Mean_Metering, color = as.factor(Year))) +
+  geom_line(size = 1) +
+  scale_x_continuous(breaks = seq(0, 24, by = 4)) + 
+  labs(title = "Average Energy Consumption by Hour of the Day",
+       x = "Hour",
+       y = "W/hr")
+hourly_use = ggplotly(hourly_use_tmp)
+hourly_use
+```
+
+Looking at the graph above, it becomes clear that **most energy is used from hours 8-9 (8-9 AM) and 20-21 (8-9 PM).**
+
+# Conclusion
+
+Through the various visualizations above, it becomes clear that most energy is used during:
+
+-   **Months**
+
+    -   **1:** January
+
+    -   **2:** February
+
+    -   **3:** December
+
+    -   An implication here is that this falls during the **winter season**. When paired with the conclusion that the Electric Water Heater and Air Conditioning System uses the most energy year-round, it can be concluded that **the Electric Water Heater uses the most energy.**
+
+-   **Time**
+
+    -   8 - 9 A.M.
+
+    -   8 - 9 P.M.
